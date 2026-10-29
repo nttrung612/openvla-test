@@ -4,18 +4,36 @@ Ví dụ dự đoán **một bước hành động** từ ảnh và chỉ dẫn 
 
 ## Cài trên server Linux với RTX 5090
 
-Cần Python 3.10, driver NVIDIA hỗ trợ CUDA 12.8 và đủ dung lượng đĩa để lưu từng checkpoint. RTX 5090 cần PyTorch build CUDA 12.8 trở lên hỗ trợ `sm_120`; không dùng nguyên môi trường PyTorch 2.2 của OpenVLA trên A100. Ví dụ cài trong môi trường mới:
+Cần [uv](https://docs.astral.sh/uv/getting-started/installation/), driver NVIDIA hỗ trợ CUDA 12.8 và đủ dung lượng đĩa để lưu từng checkpoint. uv sẽ tìm hoặc tải Python 3.10 khi tạo môi trường. RTX 5090 cần PyTorch build CUDA 12.8 trở lên hỗ trợ `sm_120`; không dùng nguyên môi trường PyTorch 2.2 của OpenVLA trên A100. Ví dụ cài trong môi trường mới:
 
 ```bash
-python3.10 -m venv .venv
+uv venv --python 3.10 .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128
-pip install -r requirements.txt
+uv pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128
+uv pip install -r requirements.txt
 python -c 'import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0), torch.cuda.get_arch_list())'
 ```
 
 Kiểm tra kết quả có GPU và `sm_120`. Môi trường này kết hợp PyTorch mới cho 5090 với Transformers phiên bản OpenVLA yêu cầu; cần kiểm chứng trên server vì khác môi trường A100 tác giả sử dụng. Không cần cài Flash Attention cho ví dụ này. Model BF16 có gần 8 tỉ tham số: chuẩn bị khoảng 16 GB VRAM cho trọng số và thêm bộ nhớ cho inference; dung lượng thực tế phụ thuộc môi trường.
+
+## Lấy ảnh từ LIBERO-Spatial
+
+Trong môi trường đã cài ở trên, cài LIBERO và các gói mô phỏng sau. Clone vào thư mục `LIBERO/` của repo; không tải bộ demonstration dataset.
+
+```bash
+git clone https://github.com/Lifelong-Robot-Learning/LIBERO.git
+uv pip install -e ./LIBERO
+uv pip install 'robosuite==1.4.1' 'mujoco==2.3.7' 'bddl==1.0.1' easydict cloudpickle 'gym==0.25.2' pyyaml
+```
+
+Trên server Linux không có màn hình, dùng EGL để render. Lần đầu LIBERO có thể hỏi đường dẫn dataset: nhập `n` để dùng mặc định. Script chọn task 0 và trạng thái đầu 0, đợi 10 bước cho cảnh ổn định, sau đó lưu ảnh camera và câu lệnh tương ứng:
+
+```bash
+export MUJOCO_GL=egl
+python capture_libero.py --task-id 0 --state-id 0
+```
+
+Kết quả nằm ở `samples/libero/scene.png`, `instruction.txt` và `metadata.json`. Thử task hoặc trạng thái khác bằng `--task-id` và `--state-id`; dùng `--output-dir` để lưu riêng. Script xoay ảnh 180 độ theo cách chuẩn bị camera của OpenVLA và resize bằng PIL; kết quả không đảm bảo giống từng pixel với bước JPEG/TensorFlow của evaluation chính thức. File trạng thái ban đầu được tải từ checkout LIBERO bằng `torch.load(..., weights_only=False)`, vì vậy chỉ dùng checkout LIBERO đáng tin cậy.
 
 ## Chạy thử
 
@@ -25,6 +43,15 @@ Chuẩn bị một ảnh RGB của workspace robot, ví dụ `scene.png`:
 python inference.py --model base --image scene.png --instruction "pick up the object"
 python inference.py --model spatial --image scene.png --instruction "pick up the object" --center-crop
 ```
+
+Hoặc dùng trực tiếp ảnh và câu lệnh vừa trích từ LIBERO:
+
+```bash
+python inference.py --model spatial --image samples/libero/scene.png --instruction-file samples/libero/instruction.txt --center-crop
+python inference.py --model base --image samples/libero/scene.png --instruction-file samples/libero/instruction.txt
+```
+
+Base chưa fine-tune cho LIBERO: kết quả trên cảnh này chỉ là thử inference, không phải đánh giá công bằng hay bảo đảm robot thực hiện được task.
 
 Lần đầu chạy sẽ tải trọng số và mã model từ Hugging Face vào cache; `trust_remote_code=True` cho phép chạy mã do OpenVLA cung cấp. Kết quả JSON có vector hành động 7 phần tử `(x, y, z, roll, pitch, yaw, gripper)` đã được khôi phục theo thống kê dataset tương ứng: `bridge_orig` cho base và `libero_spatial` cho checkpoint fine-tuned. Có thể ghi đè bằng `--unnorm-key` nếu checkpoint có key phù hợp. Hai vector dùng thống kê khác nhau nên không nên so sánh trực tiếp như cùng hệ tọa độ hoặc thang đo.
 
