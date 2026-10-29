@@ -9,12 +9,42 @@ Cần [uv](https://docs.astral.sh/uv/getting-started/installation/), driver NVID
 ```bash
 uv venv --python 3.10 .venv
 source .venv/bin/activate
-uv pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128
-uv pip install -r requirements.txt
-python -c 'import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0), torch.cuda.get_arch_list())'
+export UV_HTTP_TIMEOUT=300
+export UV_HTTP_RETRIES=10
+uv pip install 'torch==2.7.1+cu128' 'torchvision==0.22.1+cu128' --index-url https://download.pytorch.org/whl/cu128 && \
+  uv pip install -r requirements.txt
+python -c 'import torch; print("torch:", torch.__version__, "CUDA:", torch.version.cuda, "available:", torch.cuda.is_available()); assert torch.cuda.is_available(), "CUDA unavailable"; print(torch.cuda.get_device_name(0), torch.cuda.get_arch_list()); print(torch.ones(1, device="cuda") + 1)'
 ```
 
 Kiểm tra kết quả có GPU và `sm_120`. Môi trường này kết hợp PyTorch mới cho 5090 với Transformers phiên bản OpenVLA yêu cầu; cần kiểm chứng trên server vì khác môi trường A100 tác giả sử dụng. Không cần cài Flash Attention cho ví dụ này. Model BF16 có gần 8 tỉ tham số: chuẩn bị khoảng 16 GB VRAM cho trọng số và thêm bộ nhớ cho inference; dung lượng thực tế phụ thuộc môi trường.
+
+### Khi tải thư viện CUDA bị timeout
+
+Nếu tải `nvidia-cusolver-cu12==11.7.2.55` từ `pypi.nvidia.com` bị timeout dù đã tăng thời gian chờ, có thể cài trước đúng phiên bản đó từ [PyPI](https://pypi.org/project/nvidia-cusolver-cu12/11.7.2.55/), rồi chạy lại lệnh cài PyTorch trong môi trường đã kích hoạt:
+
+```bash
+uv pip install --no-deps nvidia-cusolver-cu12==11.7.2.55 --index-url https://pypi.org/simple && \
+  uv pip install 'torch==2.7.1+cu128' 'torchvision==0.22.1+cu128' --index-url https://download.pytorch.org/whl/cu128 && \
+  uv pip install -r requirements.txt
+```
+
+`--no-deps` ở bước đầu chỉ tải riêng cuSOLVER; lệnh cài PyTorch tiếp theo sẽ bổ sung các dependency CUDA theo phiên bản PyTorch yêu cầu. Chỉ tiếp tục chạy model sau khi bước cài PyTorch thành công. Dòng `Resolved ... packages` chỉ cho biết đã giải dependency, chưa xác nhận cài thành công.
+
+### Khi PyTorch báo driver quá cũ
+
+Nếu log cài đặt hiển thị PyTorch khác `2.7.1+cu128` cùng CUDA 13 và lỗi driver, cài lại đúng build CUDA 12.8 trong môi trường hiện tại:
+
+```bash
+source .venv/bin/activate
+export UV_HTTP_TIMEOUT=300
+export UV_HTTP_RETRIES=10
+uv pip install 'torch==2.7.1+cu128' 'torchvision==0.22.1+cu128' --index-url https://download.pytorch.org/whl/cu128 && \
+  uv pip install -r requirements.txt
+uv pip check
+python -c 'import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available()); assert torch.cuda.is_available(), "CUDA unavailable"; print(torch.cuda.get_device_name(0)); print(torch.ones(1, device="cuda") + 1)'
+```
+
+Kết quả cần có `2.7.1+cu128`, `12.8`, `True` và phép tính tensor trên GPU thành công. `requirements.txt` khóa cả phiên bản PyTorch và build CUDA để tránh cài nhầm bản mới từ PyPI nếu bước cài PyTorch trước đó thất bại. Nếu build đúng vẫn báo driver quá cũ, kiểm tra `nvidia-smi` trên server để xác định phiên bản driver.
 
 ## Lấy ảnh từ LIBERO-Spatial
 
