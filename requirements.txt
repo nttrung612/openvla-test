@@ -1,0 +1,6 @@
+timm==0.9.10
+tokenizers==0.19.1
+transformers==4.40.1
+accelerate>=0.26,<2
+numpy<2
+Pillow
